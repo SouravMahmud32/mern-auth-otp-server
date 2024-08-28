@@ -9,14 +9,12 @@ const router = express.Router();
 
 require('dotenv').config();
 
-// Configure nodemailer transporter using Ethereal account
+// Configure nodemailer transporter using Gmail account
 const transporter = nodemailer.createTransport({
-    host: 'smtp.ethereal.email',
-    port: 587,
-    secure: false,
+    service: 'gmail',
     auth: {
-        user: 'ansley.koss@ethereal.email',
-        pass: '4DCExBGHC42H6PhmP2'
+        user: process.env.GMAIL_USER, // Your Gmail address
+        pass: process.env.GMAIL_PASS, // Your Gmail  App Password
     },
 });
 
@@ -39,7 +37,7 @@ router.post('/register', async (req, res) => {
         await user.save();
 
         const mailOptions = {
-            from: 'noreply@example.com',
+            from: process.env.GMAIL_USER,
             to: email,
             subject: 'OTP for Account Verification',
             text: `Your OTP is: ${otp}`,
@@ -50,8 +48,6 @@ router.post('/register', async (req, res) => {
                 console.error('Error sending OTP:', error);
                 return res.status(500).json({ msg: 'Error sending OTP' });
             }
-            console.log('Message sent:', info.messageId);
-            console.log('Preview URL:', nodemailer.getTestMessageUrl(info));
             res.json({ msg: 'OTP sent to your email' });
         });
     } catch (err) {
@@ -98,15 +94,15 @@ router.post('/login', async (req, res) => {
             return res.status(400).json({ msg: 'Invalid email or password' });
         }
 
-        const otp = crypto.randomBytes(3).toString('hex');
-        const otpExpires = Date.now() + 3600000; 
+        const otp = crypto.randomBytes(3).toString('hex'); // Generate OTP for login
+        const otpExpires = Date.now() + 3600000; // 1 hour expiration
 
         user.otp = otp;
         user.otpExpires = otpExpires;
         await user.save();
 
         const mailOptions = {
-            from: 'noreply@example.com',
+            from: process.env.GMAIL_USER,
             to: email,
             subject: 'OTP for Login',
             text: `Your OTP is: ${otp}`
@@ -117,8 +113,6 @@ router.post('/login', async (req, res) => {
                 console.error('Error sending OTP:', error);
                 return res.status(500).json({ msg: 'Error sending OTP' });
             }
-            console.log('Message sent:', info.messageId);
-            console.log('Preview URL:', nodemailer.getTestMessageUrl(info));
             res.json({ msg: 'OTP sent to your email' });
         });
     } catch (err) {
@@ -163,10 +157,52 @@ router.get('/google',
 
 router.get('/google/callback',
     passport.authenticate('google', { failureRedirect: '/login' }),
-    (req, res) => {
-        res.redirect('http://localhost:3001/home');
+    async (req, res) => {
+        try {
+            // Log the entire req.user object for debugging
+            console.log('Google OAuth user object:', req.user);
+
+            // Directly access the email and ID
+            const email = req.user.email;
+            const id = req.user._id;
+
+            // Check if the email exists (it should, based on the log)
+            if (!email) {
+                throw new Error('Google OAuth did not return an email');
+            }
+
+            let user = await User.findOne({ email });
+
+            if (!user) {
+                // create a new user with isVerified set to true
+                console.log('Creating a new user with email:', email);
+                user = new User({
+                    googleId: id,
+                    email: email,
+                    isVerified: true
+                });
+                await user.save();
+            } else if (!user.isVerified) {
+                // If the user exists but isn't verified, mark as verified
+                console.log('Updating existing user to be verified:', email);
+                user.isVerified = true;
+                await user.save();
+            }
+
+            // Generate a JWT for the user
+            const payload = { user: { id: user.id } };
+            jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' }, (err, token) => {
+                if (err) throw err;
+                console.log('Generated JWT:', token);
+                res.redirect(`http://localhost:3000/home?token=${token}`);
+            });
+        } catch (err) {
+            console.error('Error handling Google callback:', err.message);
+            res.status(500).send('Server error');
+        }
     }
 );
+
 
 router.get('/logout', (req, res) => {
     req.logout(err => {

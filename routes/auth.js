@@ -194,7 +194,7 @@ router.get('/google/callback',
             jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' }, (err, token) => {
                 if (err) throw err;
                 console.log('Generated JWT:', token);
-                res.redirect(`http://localhost:3000/home?token=${token}`);
+                res.redirect(`https://mern-auth-frontend-dun.vercel.app/home?token=${token}`);
             });
         } catch (err) {
             console.error('Error handling Google callback:', err.message);

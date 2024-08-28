@@ -1,9 +1,9 @@
 const express = require('express');
-const connectDB = require('./config/db');
+const connectDB = require('../config/db');
 const cors = require('cors');
 const session = require('express-session');
 const passport = require('passport');
-require('./config/passport'); 
+require('../config/passport'); 
 
 const app = express();
 
@@ -40,7 +40,11 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 // Define Routes
-app.use('/api/auth', require('./routes/auth'));
+app.use('/api/auth', require('../routes/auth'));
+
+app.get("/", (req, res) => {
+    res.send("App works properly!");
+  });
 
 const PORT = process.env.PORT || 5000;
 

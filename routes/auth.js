@@ -150,7 +150,75 @@ router.post('/verify-login-otp', async (req, res) => {
     }
 });
 
-// Google OAuth Routes
+// Google OAuth Routes with OTP verification
+router.get('/google-initiate', async (req, res) => {
+    const { email } = req.query; // Assuming email is passed as a query parameter
+
+    try {
+        let user = await User.findOne({ email });
+        if (!user) {
+            return res.status(400).json({ msg: 'User does not exist' });
+        }
+
+        if (!user.isVerified) {
+            const otp = crypto.randomBytes(3).toString('hex');
+            const otpExpires = Date.now() + 3600000; // 1 hour expiration
+
+            user.otp = otp;
+            user.otpExpires = otpExpires;
+            await user.save();
+
+            const mailOptions = {
+                from: process.env.GMAIL_USER,
+                to: email,
+                subject: 'OTP for Google OAuth Verification',
+                text: `Your OTP is: ${otp}`,
+            };
+
+            transporter.sendMail(mailOptions, (error) => {
+                if (error) {
+                    console.error('Error sending OTP:', error);
+                    return res.status(500).json({ msg: 'Error sending OTP' });
+                }
+                res.json({ msg: 'OTP sent to your email' });
+            });
+        } else {
+            // If the user is already verified, proceed with Google OAuth
+            res.redirect('/api/auth/google');
+        }
+    } catch (err) {
+        console.error('Server error:', err.message);
+        res.status(500).send('Server error');
+    }
+});
+
+router.post('/verify-google-otp', async (req, res) => {
+    const { email, otp } = req.body;
+
+    try {
+        let user = await User.findOne({ email });
+        if (!user) {
+            return res.status(400).json({ msg: 'User does not exist' });
+        }
+
+        if (user.otp !== otp || user.otpExpires < Date.now()) {
+            return res.status(400).json({ msg: 'Invalid or expired OTP' });
+        }
+
+        user.isVerified = true;
+        user.otp = undefined;
+        user.otpExpires = undefined;
+        await user.save();
+
+        // After successful OTP verification, proceed with Google OAuth
+        res.redirect('/api/auth/google');
+    } catch (err) {
+        console.error('Server error:', err.message);
+        res.status(500).send('Server error');
+    }
+});
+
+// Continue with the existing Google OAuth routes
 router.get('/google',
     passport.authenticate('google', { scope: ['profile', 'email'] })
 );
@@ -159,14 +227,9 @@ router.get('/google/callback',
     passport.authenticate('google', { failureRedirect: '/login' }),
     async (req, res) => {
         try {
-            // Log the entire req.user object for debugging
-            console.log('Google OAuth user object:', req.user);
-
-            // Directly access the email and ID
             const email = req.user.email;
             const id = req.user._id;
 
-            // Check if the email exists (it should, based on the log)
             if (!email) {
                 throw new Error('Google OAuth did not return an email');
             }
@@ -174,8 +237,6 @@ router.get('/google/callback',
             let user = await User.findOne({ email });
 
             if (!user) {
-                // create a new user with isVerified set to true
-                console.log('Creating a new user with email:', email);
                 user = new User({
                     googleId: id,
                     email: email,
@@ -183,17 +244,13 @@ router.get('/google/callback',
                 });
                 await user.save();
             } else if (!user.isVerified) {
-                // If the user exists but isn't verified, mark as verified
-                console.log('Updating existing user to be verified:', email);
                 user.isVerified = true;
                 await user.save();
             }
 
-            // Generate a JWT for the user
             const payload = { user: { id: user.id } };
             jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' }, (err, token) => {
                 if (err) throw err;
-                console.log('Generated JWT:', token);
                 res.redirect(`https://mern-auth-frontend-dun.vercel.app/home?token=${token}`);
             });
         } catch (err) {

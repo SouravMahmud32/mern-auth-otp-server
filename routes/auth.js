@@ -14,7 +14,7 @@ const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
         user: process.env.GMAIL_USER, // Your Gmail address
-        pass: process.env.GMAIL_PASS, // Your Gmail  App Password
+        pass: process.env.GMAIL_PASS, // Your Gmail App Password
     },
 });
 
@@ -150,7 +150,7 @@ router.post('/verify-login-otp', async (req, res) => {
     }
 });
 
-// Add this route to initiate OTP verification before Google OAuth
+// Initiate OTP verification before Google OAuth
 router.post('/google/initiate-otp', async (req, res) => {
     const { email } = req.body;
     try {
@@ -188,7 +188,7 @@ router.post('/google/initiate-otp', async (req, res) => {
     }
 });
 
-// Verify OTP and redirect to Google OAuth if valid
+// Verify OTP and proceed to Google OAuth
 router.post('/google/verify-otp', async (req, res) => {
     const { email, otp } = req.body;
     try {
@@ -225,22 +225,44 @@ router.get('/google/callback',
 
             let user = await User.findOne({ email });
             if (user && !user.isVerified) {
-                return res.status(400).json({ msg: 'Please verify your email via OTP before using Google OAuth' });
-            }
+                // If user is not verified, initiate OTP verification
+                const otp = crypto.randomBytes(3).toString('hex');
+                const otpExpires = Date.now() + 3600000; // 1 hour expiration
 
-            const payload = { user: { id: user.id } };
-            jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' }, (err, token) => {
-                if (err) throw err;
-                res.redirect(`https://mern-auth-frontend-dun.vercel.app/home?token=${token}`);
-            });
+                user.otp = otp;
+                user.otpExpires = otpExpires;
+                await user.save();
+
+                const mailOptions = {
+                    from: process.env.GMAIL_USER,
+                    to: email,
+                    subject: 'OTP for Account Verification',
+                    text: `Your OTP is: ${otp}`,
+                };
+
+                transporter.sendMail(mailOptions, (error, info) => {
+                    if (error) {
+                        console.error('Error sending OTP:', error);
+                        return res.status(500).json({ msg: 'Error sending OTP' });
+                    }
+                    return res.redirect(`https://mern-auth-frontend-dun.vercel.app/verify-otp?email=${email}`);
+                });
+            } else if (user && user.isVerified) {
+                // If user is verified, proceed with JWT token generation
+                const payload = { user: { id: user.id } };
+                jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' }, (err, token) => {
+                    if (err) throw err;
+                    res.redirect(`https://mern-auth-frontend-dun.vercel.app/home?token=${token}`);
+                });
+            } else {
+                res.status(400).json({ msg: 'User not found' });
+            }
         } catch (err) {
             console.error('Error handling Google callback:', err.message);
             res.status(500).send('Server error');
         }
     }
 );
-
-
 
 router.get('/logout', (req, res) => {
     req.logout(err => {
